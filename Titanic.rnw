@@ -1,0 +1,297 @@
+% Created 2018-01-29 Mon 16:06
+% Modified 2018-02-07 MvD
+% Intended Lahide compiler: pdflahide
+\documentclass[11pt]{article}
+
+<<TEST-AND-THRESHOLD-SETTINGS>>=
+    ## STUB ADDED BY MvD
+    # SET THIS TO FALSE FOR THE FINAL RUN
+    SOFTWARE_TESTING <- TRUE;
+    # IF A FACTOR HAS MORE THAN THIS NUMBER OF LEVELS,
+    # WE REMOVE THE FACTOR. YOU MAY CHANGE THIS VALUE.
+    MAXIMUM_FACTOR_LEVEL <- 31
+
+@
+
+<<RANDOM-NUMBER-GENERATION>>=
+    ## STUB ADDED BY MvD
+    if (SOFTWARE_TESTING) {
+        set.seed( 0 );
+    }
+@
+
+\usepackage[a4paper,portrait]{geometry}
+\setcounter{secnumdepth}{2}
+\author{Sebastian Scheurer \&\ Marc van Dongen}
+\date{February 8, 2018}
+\title{Explore, clean, and visualise the Titanic dataset}
+\begin{document}
+
+\maketitle
+\setcounter{tocdepth}{1}
+\tableofcontents
+
+
+\section{Load data-set}
+Set default options for knitr chunks:
+<<setup-knitr,results='hide'>>=
+    library(knitr)
+    opts_chunk$set(prompt=TRUE, fig.path='img/')
+@
+
+Configure the path of input and output CSV:
+<<setup-paths,results='hide'>>=
+    # Set this to the folder where you keep the train.csv supplied by kaggle
+    data_dir <- file.path('/Users/apple/Desktop/MSc_Semester_2/Datamining_CS6405/Assignment/Titanic', 'data')
+# Set this to the full path of the CSV file to which you want to save
+    # the cleaned data-set
+    outpath <- file.path(data_dir, 'processed', 'Titanic.csv')
+    csvpath <- file.path(data_dir, 'external', 'train.csv')
+@ 
+
+Read in the training data, setting rownames from the \emph{PassengerId}
+column
+<<loadcsv,results='hide'>>=
+    titanic <- read.csv(csvpath, row.names='PassengerId')
+@ 
+
+\section{First looks}
+Have a look at the dataset structure
+<<str-dsraw>>=
+    str(titanic)
+@ 
+
+Look at the first 6~rows.
+<<head-dsraw>>=
+    head(titanic)
+@ 
+
+Look at the last 6~rows
+<<tail-dsraw>>=
+    tail(titanic)
+@ 
+
+Look at a random sample of 10 rows
+    <<random-dsraw>>=
+    titanic[sample(nrow(titanic), size=10), ]
+@ 
+
+Obtain a summary of all the variables in the data-frame
+<<summary-dsraw>>=
+    summary(titanic)
+@ 
+
+\section{Visualisation}
+\subsection{Scatter plot matrix}
+Generate the scatterplot matrix shown in Figure~\ref{fig:splom}
+<<splom,fig.cap='Scatterplot matrix of all variables except \\hidettt{Name}, \\hidettt{Ticket} and \\hidettt{Cabin}'>>=
+    # Save the variable (column) names to a vector
+    (vars <- names(titanic))
+    # These factors have too many levels to be useful
+    # Changed by MvD
+    ignorevars <- sapply( vars, function( name ) return (is.factor( titanic[[ name ]] ) & (nlevels( titanic[[ name ]] ) > MAXIMUM_FACTOR_LEVEL )) )
+    # Was
+    # ignorevars <- c('Name', 'Ticket', 'Cabin')
+    # `setdiff' returns those elements that are in `vars' but not in
+    # `ignorevars'.
+    pairs(titanic[, setdiff(vars, ignorevars)], upper.panel=panel.smooth)
+@ 
+
+\subsection{Mosaic plot of \hidettt{Survived} by \hidettt{Pclass} and \hidettt{Sex}}
+Generate the mosaicplot shown in Figure~\ref{fig:mp-pclass-sex}
+<<mp-pclass-sex,fig.cap='Mosaicplot of \\hidettt{Survived} by \\hidettt{Pclass} and \\hidettt{Sex}'>>=
+    mosaicplot(Survived ~ Pclass + Sex, data=titanic, color=TRUE,
+               shade=TRUE, main='Survival by Pclass and Sex')
+@ 
+
+Generate the mosaicplot shown in Figure~\ref{fig:mp-embarked-sex}
+<<mp-embarked-sex,fig.cap='Mosaicplot of \\hidettt{Survived} by \\hidettt{Embarked} and \\hidettt{Sex}'>>=
+    mosaicplot(Survived ~ Embarked + Sex, data=titanic, color=TRUE,
+               shade=TRUE, main='Survival by Pclass and Embarked')
+@ 
+
+\clearpage
+
+\section{Data cleaning}
+Let's first look at missing values (\hidettt{NA}).
+
+Count missing values for each column
+<<nacount-cols>>=
+    colSums(is.na(titanic))
+@ 
+
+The age of \Sexpr{sum(is.na(titanic[['Age']]))} passengers is unknown.
+We'll have to do something about that.
+
+If the empty string appears in a column with non-numeric data, then it
+will be interpreted as a valid label (known as a \hidettt{level} in \hidettt{R}
+terminology) by default. Even if this was what we wanted, it might be
+better to code it explicitly as e.g., ``missing'' or ``not applicable''.
+
+Count empty strings for each factor
+<<emptystrcount-cols>>=
+    vars <- names(titanic)
+    catvars <- vars[sapply(titanic, is.factor)]
+    colSums(titanic[, catvars] == '')
+@ 
+
+It looks like \Sexpr{sum(titanic[['Cabin']] == '')} passengers did not
+book a cabin, i.e., \hidettt{Cabin} is set to the empty string. R will
+do what we want, i.e., it will not interpret this as a missing value
+but as a valid cabin label.
+
+We can make this explicit by setting the corresponding \hidettt{level} to the
+string ``NoCabin''
+<<derivevar-nocabin,results='hide'>>=
+    # Copy the cabin variable
+    cabin <- titanic[['Cabin']]
+    # Which level (index) is equal to the empty string?
+    empty_lvl_idx <- which(levels(cabin) == '')
+    # Set that level to the string "NoCabin"
+    levels(cabin)[empty_lvl_idx] <- 'NoCabin'
+    # Replace the original Cabin variable
+    titanic[['Cabin']] <- cabin
+@ 
+
+There are two cases which have \hidettt{Embarked} set to the empty
+string, should we impute one of the three known ports for these
+values, or does it make sense to think about these two cases as having
+embarked somewhere else? They might, for example, have been born on
+board, or stowaways with an unkown port of origin.
+
+\subsubsection*{Age imputation}
+
+What are we going to do about the missing ages? The most basic fix is
+to replace the missing age values with a constant, say the mean (or
+median) age.
+
+Generate replacement ages from the median age
+<<generate-age-median,results='hide'>>=
+    # Obtain a vector of booleans, each of which is TRUE iff the
+    # corresponding Age is missing
+    missing_mask <- is.na(titanic[['Age']])
+    # How many are missing?
+    n_missing <- sum(missing_mask)
+    # Calculate the median age, using only those observations that are not
+    # (hence the `!') missing
+    med_age <- median(titanic[!missing_mask, 'Age'])
+    # Replicate (repeat) the median age `n_missing' times
+    imputed_age <- rep(med_age, n_missing)
+@ 
+
+A more sophisticated approach is to generate a random age for each
+missing observation, using a distribution similar to that of the
+existing age values. A simple first approximation might be to generate
+samples from a normal distribution with mean and standard deviation
+equal to that of the (for example) square root of the existing ages,
+then square each of the generated values, and use the results to
+replace the missing ages. The square root transform ensures that the
+back-transformed result is non-negative.
+
+Impute missing Age with a sample from a Normal distribution
+<<generate-age-rnorm,results='hide'>>=
+    # Compute the mean of sqrt(Age)
+    age_mean_sqrt <- with(titanic[!missing_mask,], mean(sqrt(Age)))
+    # Compute the standard deviation of sqrt(Age)
+    age_sd_sqrt <- with(titanic[!missing_mask,], mean(sqrt(Age)))
+    # Generate n_missing ages from normal distribution
+    imputed_age <- rnorm(n_missing, mean=age_mean_sqrt, sd=age_sd_sqrt)
+    # Back-transform by computing each age's square:
+    imputed_age <- imputed_age^2
+@ 
+
+Replace the missing ages with the generated values
+<<impute-age,results='hide'>>=
+    titanic[missing_mask, 'Age'] <- imputed_age
+@ 
+
+\paragraph*{Impute age via regression}
+An even more sophisticated approach is to fit a regression model to
+the observed ages, using some of the other input variables (but not
+\hidettt{Survived}) as the predictors, and use that to impute the
+missing values.
+
+For example:
+<<fit-agemod-lm>>=
+    agemod <- lm(sqrt(Age) ~ Pclass + SibSp + Parch, data=titanic,
+                 subset=!missing_mask)
+    summary(agemod)
+@ 
+
+Estimate the missing age values using regression model
+<<generate-age-lmmod,results='hide'>>=
+    # Predict age using the regression model
+    imputed_age <- predict(agemod, newdata=titanic[missing_mask, ],
+                           type='response')
+    # Have to square these to transform back to original scale
+    imputed_age <- imputed_age^2
+@ 
+
+Generate the histograms of imputed and existing age values shown in
+Figure~\ref{fig:lmage-vs-existing-vs-combined}
+<<lmage-vs-existing-vs-combined,fig.cap='Histograms of the estimated, existing (data), and combined ages'>>=
+    opar <- par(mfrow=c(1,3))
+    hist(titanic[!missing_mask, 'Age'], main='data', xlab='Age')
+    hist(imputed_age, main='estimated', xlab='Age')
+    hist(c(titanic[!missing_mask, 'Age'], imputed_age), main='combined',
+         xlab='Age')
+    par(opar)
+@ 
+
+Replace the missing age with those estimated by our linear model
+<<impute-age-lmestimates,results='hide'>>=
+    titanic[missing_mask, 'Age'] <- imputed_age
+@ 
+
+\subsection{Data-types and formatting issues?}
+\hidettt{Pclass} might be better coded as a factor, possibly ordered. Note
+that not all data-mining and machine learning algorithms are able to
+deal with ordered factors. Those that do may be able to leverage the
+additional information provided by the level ordering. However, we can
+easily convert from one format to the other.
+
+Convert \hidettt{Pclass} to a factor
+<<pclass-to-factor,results='hide'>>=
+    # Regular (unordered) factor
+    pclass <- factor(titanic[['Pclass']])
+    # to convert to an ordered factor
+    pclass <- ordered(pclass)
+    # equivalently:
+    # pclass <- factor(titanic[['Pclass']], ordered=TRUE)
+    # to convert back to an unordered factor
+    pclass <- factor(pclass, ordered=FALSE)
+    # Replace the Pclass in the data-frame
+    titanic[['Pclass']] <- pclass
+@ 
+
+We may want to extract the first character from the \hidettt{Cabin} variable
+which might denote a group of passengers who were accommodated in the
+same area of the ship.
+
+Extract first character of Cabin variable
+<<derivevar-cabinclass,results='hide'>>=
+    cabin <- titanic[['Cabin']]
+    # Extract the first character, i.e., the substring that starts at, and
+    # ends with, the first character
+    cabinclass <- substr(cabin, 1, 1)
+    # Set empty cabins to `N'
+    cabinclass[cabinclass == ''] <- 'N'
+    # convert to factor
+    cabinclass <- factor(cabinclass)
+    # Add this as a new variable, `Cabinc' to the data-set
+    titanic[['Cabinc']] <- cabinclass
+@ 
+
+Generate the spineplot of \hidettt{Survied} by \hidettt{Cabinc} shown in
+Figure~\ref{fig:sp-survived-cabinc}
+<<sp-survived-cabinc,fig.cap='Spineplot (special case of Mosaicplot) of \\hidettt{Survied} by \\hidettt{Cabinc}'>>=
+    plot(factor(Survived) ~ Cabinc, data=titanic, ylab='Survived')
+@ 
+
+\subsection{Save the cleaned data-set to a CSV}
+<<save-clean-csv,results='hide'>>=
+    write.csv(titanic, outpath, row.names=TRUE)
+@ 
+\end{document}
+
+
